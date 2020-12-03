@@ -8,11 +8,10 @@ const mysql = require('mysql2/promise');
 
 const db_setting = {
     host: 'db',
-    user: 'root',
-    password: 'sdadfdaddgy',
-    database: 'rank_db',
+    user: process.env.DB_USER,
+    password: process.env.DB_KEY,
+    database: process.env.DB_NAME
 }
-
 
 ini();
 
@@ -34,13 +33,13 @@ async function rankPOST(req, res){
 
   if (req.body.userID != undefined&&
     req.body.name != undefined&&
-    req.body.score != undefined){
+    req.body.score != undefined&&
+    req.body.rank_name != undefined){
     try {
 
        await connection.beginTransaction();
 
         var [isExist,isTopScore] = await checkAlreadyRank(req,connection);
-
 
         // ハイスコの場合保存、すでにデータがあれば更新、無ければ挿入
         if (isExist){
@@ -50,7 +49,6 @@ async function rankPOST(req, res){
         }else{
           await insertRank(req,connection);
         }
-
 
         // 返答
         await responceData(req, res,connection);
@@ -79,9 +77,11 @@ async function rankPOST(req, res){
 //返信データを作成して返信する
 async function responceData(req, res,connection){
   var course = {};
+  course.status = "correct";
   var rank = await getRank(req,connection);
   course.rank = rank[0].rank;
-  var rows = await selectRankTopN(10,connection);
+  course.rank_name = req.body.rank_name;
+  var rows = await selectRankTopN(req,10,connection);
   course.rank_data_Top = [];
   await rows.forEach((roll) => {
     course.rank_data_Top.push(
@@ -91,7 +91,7 @@ async function responceData(req, res,connection){
     });
   });
 
-  var rowss = await selectRankNearN(10,course.rank,connection);
+  var rowss = await selectRankNearN(req,10,course.rank,connection);
   course.rank_data_Near = [];
   await rowss.forEach((rolls) => {
     course.rank_data_Near.push(
@@ -105,35 +105,35 @@ async function responceData(req, res,connection){
   await res.send(course);
 }
 
-
 //ランキングdbに挿入する
 async function insertRank(req,connection){
-  const insert = "INSERT INTO rank_db.rankdata set ?;";
+  const insert = "INSERT INTO rankdata set ?;";
   console.log(insert);
   const data = {
       userID: req.body.userID,
       name: req.body.name,
-      score: req.body.score
+      score: req.body.score,
+      rank_name: req.body.rank_name
   }
   const [row2] = await connection.query(insert, data);
 }
 
 //ランキングdbに更新する
 async function updateRank(req,connection){
-  const insert = "UPDATE rank_db.rankdata SET name = ?, score = ? Where userID = ?;";
+  const insert = "UPDATE rankdata SET score = ? Where userID = ? AND rank_name = ?;";
   console.log(insert);
   const data = [
-      req.body.name,
       req.body.score,
-      req.body.userID
+      req.body.userID,
+      req.body.rank_name
   ]
   const [row2] = await connection.query(insert, data);
 }
 
 //ランキングdbに追加の対象が存在するか
 async function checkAlreadyRank(req,connection){
-  let d = [req.body.userID]
-  const sql = "select * from rankdata Where userID = ?;";
+  let d = [req.body.userID,req.body.rank_name]
+  const sql = "select * from rankdata Where userID = ? AND rank_name = ?;";
   const [rows, fields] = await connection.execute(sql,d);
   console.log(rows);
   //データがすでに存在するか
@@ -155,29 +155,29 @@ async function checkAlreadyRank(req,connection){
 }
 
 //ランキングのデータを取得する
-async function selectRankTopN(num,connection){
-  const sql = "select * from rankdata ORDER BY score DESC LIMIT ?";
-  let d = [num]
+async function selectRankTopN(req,num,connection){
+  const sql = "select * from rankdata Where rank_name = ? ORDER BY score DESC LIMIT ?";
+  let d = [req.body.rank_name,num]
   var [rows, fields] = await connection.execute(sql,d);
   return rows;
 }
 
 //ランキングのデータを取得する
-async function selectRankNearN(num,rank,connection){
-  const sql = "select * from rankdata ORDER BY score DESC LIMIT ?,?";
+async function selectRankNearN(req,num,rank,connection){
+  const sql = "select * from rankdata Where rank_name = ? ORDER BY score DESC LIMIT ?,?";
   var offset = rank-num/2;
   if (offset < 0){
     offset = 0;
   }
-  let d = [offset,num]
+  let d = [req.body.rank_name,offset,num]
   var [rows, fields] = await connection.execute(sql,d);
   return rows;
 }
 
 //ランキングを取得する
 async function getRank(req,connection){
-  const sql = "SELECT COUNT(*) + 1 AS rank FROM rankdata WHERE score > ?;";
-  let d = [req.body.score];
+  const sql = "SELECT COUNT(*) + 1 AS rank FROM rankdata WHERE score > ? AND rank_name = ?;";
+  let d = [req.body.score,req.body.rank_name];
   console.log(d);
   var [rows, fields] = await connection.execute(sql,d);
   return rows;
